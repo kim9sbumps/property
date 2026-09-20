@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>나만의 부동산 매물 & 메모 보드</title>
+  <!-- 지도 오픈소스 Leaflet CDN -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+    
+    /* 좌측 지도 영역 */
+    #map { flex: 1; height: 100%; }
+
+    /* 우측 사이드바 */
+    #sidebar { width: 380px; height: 100%; background: #fdfdfd; border-left: 1px solid #ddd; display: flex; flex-direction: column; }
+    
+    .panel-header { padding: 16px; background: #2c3e50; color: white; }
+    .panel-header h2 { font-size: 1.1rem; }
+    
+    .content { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+    
+    /* 매물 입력 폼 */
+    .form-box { background: #f4f6f8; padding: 12px; border-radius: 6px; font-size: 0.85rem; }
+    .form-box input { width: 100%; padding: 6px; margin-top: 4px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; }
+    .btn-add { width: 100%; padding: 8px; background: #34495e; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    .btn-add:hover { background: #2c3e50; }
+
+    /* 선택 매물 상세 및 메모 */
+    .detail-card { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; background: #fff; }
+    .detail-card h3 { font-size: 1rem; margin-bottom: 6px; color: #1a202c; }
+    .detail-card .meta { font-size: 0.85rem; color: #4a5568; margin-bottom: 8px; }
+    .detail-card textarea { width: 100%; height: 90px; padding: 8px; border: 1px solid #cbd5e0; border-radius: 4px; resize: vertical; font-size: 0.85rem; }
+    .btn-save { margin-top: 6px; width: 100%; padding: 6px; background: #3182ce; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .btn-delete { margin-top: 4px; width: 100%; padding: 6px; background: #e53e3e; color: white; border: none; border-radius: 4px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <div id="sidebar">
+    <div class="panel-header">
+      <h2>매물 스크랩 & 메모장</h2>
+    </div>
+
+    <div class="content">
+      <!-- 새 매물 등록 -->
+      <div class="form-box">
+        <strong>새 매물 핀 추가</strong>
+        <input type="text" id="propTitle" placeholder="매물 이름 (예: 센텀 OOO 101동)">
+        <input type="text" id="propPrice" placeholder="가격 정보 (예: 전세 2억 / 월세 1000/60)">
+        <input type="text" id="propCoords" placeholder="위도, 경도 (예: 35.1795, 129.0756)">
+        <button class="btn-add" onclick="addProperty()">지도에 등록</button>
+      </div>
+
+      <!-- 선택된 매물 상세/메모 -->
+      <div id="detailSection" style="display: none;">
+        <div class="detail-card">
+          <h3 id="viewTitle"></h3>
+          <div class="meta" id="viewPrice"></div>
+          <label style="font-size: 0.8rem; font-weight: bold;">개인 메모:</label>
+          <textarea id="viewMemo" placeholder="일조량, 수압, 융자금, 주변 소음 등 자유 메모..."></textarea>
+          <button class="btn-save" onclick="saveMemo()">메모 저장</button>
+          <button class="btn-delete" onclick="deleteProperty()">매물 삭제</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 1. 지도 초기화 (초기 중심 좌표: 부산 시청 부근)
+    const map = L.map('map').setView([35.1795, 129.0756], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // 2. LocalStorage에서 저장된 매물 불러오기
+    let properties = JSON.parse(localStorage.getItem('my_properties') || '[]');
+    let currentSelectedId = null;
+    let markers = {};
+
+    function renderMarkers() {
+      // 기존 마커 초기화
+      Object.values(markers).forEach(m => map.removeLayer(m));
+      markers = {};
+
+      properties.forEach(item => {
+        const marker = L.marker([item.lat, item.lng]).addTo(map);
+        marker.on('click', () => selectProperty(item.id));
+        markers[item.id] = marker;
+      });
+    }
+
+    // 3. 매물 선택 시 사이드바 업데이트
+    function selectProperty(id) {
+      const item = properties.find(p => p.id === id);
+      if (!item) return;
+
+      currentSelectedId = id;
+      document.getElementById('detailSection').style.display = 'block';
+      document.getElementById('viewTitle').textContent = item.title;
+      document.getElementById('viewPrice').textContent = item.price;
+      document.getElementById('viewMemo').value = item.memo || '';
+    }
+
+    // 4. 새 매물 추가
+    function addProperty() {
+      const title = document.getElementById('propTitle').value.trim();
+      const price = document.getElementById('propPrice').value.trim();
+      const coords = document.getElementById('propCoords').value.trim().split(',');
+
+      if (!title || coords.length !== 2) {
+        alert('매물 이름과 올바른 위도, 경도를 입력해주세요.');
+        return;
+      }
+
+      const lat = parseFloat(coords[0].trim());
+      const lng = parseFloat(coords[1].trim());
+
+      const newProp = {
+        id: 'prop_' + Date.now(),
+        title,
+        price,
+        lat,
+        lng,
+        memo: ''
+      };
+
+      properties.push(newProp);
+      localStorage.setItem('my_properties', JSON.stringify(properties));
+      renderMarkers();
+      map.panTo([lat, lng]);
+
+      // 입력창 비우기
+      document.getElementById('propTitle').value = '';
+      document.getElementById('propPrice').value = '';
+      document.getElementById('propCoords').value = '';
+    }
+
+    // 5. 메모 저장
+    function saveMemo() {
+      if (!currentSelectedId) return;
+      const memoText = document.getElementById('viewMemo').value;
+      
+      const item = properties.find(p => p.id === currentSelectedId);
+      if (item) {
+        item.memo = memoText;
+        localStorage.setItem('my_properties', JSON.stringify(properties));
+        alert('메모가 저장되었습니다.');
+      }
+    }
+
+    // 6. 매물 삭제
+    function deleteProperty() {
+      if (!currentSelectedId || !confirm('이 매물을 삭제하시겠습니까?')) return;
+      properties = properties.filter(p => p.id !== currentSelectedId);
+      localStorage.setItem('my_properties', JSON.stringify(properties));
+      document.getElementById('detailSection').style.display = 'none';
+      renderMarkers();
+    }
+
+    // 초기 렌더링
+    renderMarkers();
+  </script>
+</body>
+</html>
